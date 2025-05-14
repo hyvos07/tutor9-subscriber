@@ -44,3 +44,57 @@ Kesimpulannya, `guest:guest@localhost:5672` adalah format URI yang akan dipakai 
 Pada gambar di atas, dapat dilihat bahwa dengan ditambahkannya `thread::sleep(ten_millis);` pada proses yang ada di subscriber, ia akan memproses event yang diterima nya dengan sedikit lebih lambat. Hal ini pula yang membuat tidak semua message yang disalurkan lewat RabbitMQ dapat langsung diproses semuanya dalam waktu yang singkat. Antisipasi kasus ini sudah dicover dengan pembuatan **queue** untuk message-message berisi event yang belum dapat diproses pada RabbitMQ. Queue ini di-manage dengan bantuan library rust `CrosstownBus`, yang ada di sisi publisher maupun subscriber.
 
 Dengan adanya queue ini, walaupun subscriber harus memproses event lebih lama dari waktu yang diperlukan untuk mengirim event yang baru, publisher dapat mengirim event baru tanpa harus menunggu proses yang ada di subscriber selesai terlebih dahulu. Queue pada di gambar yang ada di atas mencapai 30 messages yang menunggu di queue untuk dikirim dan diproses, karena saya menjalankan publisher berkali-kali tanpa menunggu proses di subscriber selesai.
+
+## Running at Least Three Subscribers
+
+<picture>
+    <img src="img/four.png">
+</picture>
+<picture>
+    <img src="img/multi.png">
+</picture>
+
+Setelah saya mencoba untuk memakai 4 consumer/subscriber untuk memproses event yang dikirim oleh publisher dengan rate yang hampir mirip, dapat dilihat pada gambar dashboard RabbitMQ di atas bahwa tidak terjadi lagi penumpukan event pada queue yang menunggu untuk diproses. Hal ini terjadi karena RabbitMQ secara otomatis mendistribusikan message-message event dari queue tersebut kepada subscriber-subscriber yang aktif. Dengan begitu, setiap subscriber secara bergantian mengambil message yang ada di queue dan memprosesnya secara individual, tanpa terganggu oleh proses yang terjadi di subscriber yang lain. Karena hal tersebut, tidak terjadi penumpukan di queue dan semua messages yang masuk dapat diproses lebih cepat.
+
+Fenomena ini menunjukkan kelebihan dalam kemampuan skalabilitas horizontal dari sistem queue milik RabbitMQ, di mana kita dapat mereduksi load yang dikerjakan oleh aplikasi dengan menambah lebih banyak subscriber, sehingga meningkatkan throughput dan mengurangi waktu dalam pemrosesan message. Kelebihan ini dapat mengurangi pengubahan source code yang ada untuk meningkatkan performa dari aplikasi yang kita miliki.
+
+### Final Reflection
+
+Pada kode yang sudah kita miliki sekarang, pada subscriber masih membuka koneksi ke RabbitMQ message secara satu persatu tanpa adanya error handling yang cukup aman. Bagian kode seperti di bawah bisa ditambahkan agar lebih aman:
+
+```rs
+fn main() {
+    let listener =
+        CrosstownBus::new_queue_listener("amqp://guest:guest@localhost:5672".to_owned()).unwrap();
+    
+    match listener.listen(
+        "user_created".to_owned(),
+        UserCreatedHandler {},
+        crosstown_bus::QueueProperties {
+            auto_delete: false,
+            durable: false,
+            use_dead_letter: true,
+        },
+    ) {
+        Ok(_) => {
+            println!("Subscriber started successfully");
+            loop {}
+        }
+        Err(e) => {
+            eprintln!("Failed to start subscriber: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+```
+
+Selain itu, bisa juga diimplementasikan connection pool di publisher untuk mengirim messages ke RabbitMQ lebih aman tanpa harus khawatir jika ada proses yang gagal di salah satu koneksi yang dibuat. Perbaikan ini juga cocok apabila nantinya publisher akan memakai multi-threading.
+
+```rs
+fn main() {
+    let mut pool = PublisherPool::new("amqp://guest:guest@localhost:5672".to_owned(), 3)
+        .expect("Failed to create publisher pool"); // Buat 3 publisher connection
+
+    // ... dst
+}
+```
