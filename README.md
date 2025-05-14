@@ -32,3 +32,15 @@ Secara garis besar, AMQP bekerja dengan konsep berikut:
 4. `5672`: Ini adalah default port yang digunakan oleh AMQP untuk koneksi yang tidak memakai TLS connections. Jika nantinya diperlukan koneksi yang memakai TLS atau SSL, maka harus memakai port `5671`.
 
 Kesimpulannya, `guest:guest@localhost:5672` adalah format URI yang akan dipakai untuk melakukan koneksi pada broker AMQP dari RabbitMQ yang berjalan pada `localhost` di port `5672`, dengan username dan password `guest`. Format ini mirip dengan bentuk URI lainnya yang biasa ditemukan di beberapa aplikasi lainnya, misalnya database.
+
+## Simulation Slow Subscriber
+
+<picture>
+    <img src="img/slow.png">
+</picture>
+
+*"Why the total number of queue is as such?"*
+
+Pada gambar di atas, dapat dilihat bahwa dengan ditambahkannya `thread::sleep(ten_millis);` pada proses yang ada di subscriber, ia akan memproses event yang diterima nya dengan sedikit lebih lambat. Hal ini pula yang membuat tidak semua message yang disalurkan lewat RabbitMQ dapat langsung diproses semuanya dalam waktu yang singkat. Antisipasi kasus ini sudah dicover dengan pembuatan **queue** untuk message-message berisi event yang belum dapat diproses pada RabbitMQ. Queue ini di-manage dengan bantuan library rust `CrosstownBus`, yang ada di sisi publisher maupun subscriber.
+
+Dengan adanya queue ini, walaupun subscriber harus memproses event lebih lama dari waktu yang diperlukan untuk mengirim event yang baru, publisher dapat mengirim event baru tanpa harus menunggu proses yang ada di subscriber selesai terlebih dahulu. Queue pada di gambar yang ada di atas mencapai 30 messages yang menunggu di queue untuk dikirim dan diproses, karena saya menjalankan publisher berkali-kali tanpa menunggu proses di subscriber selesai.
